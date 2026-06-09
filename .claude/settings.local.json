@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "WebSearch",
+      "WebFetch(domain:www.method.gg)",
+      "Bash(node solver_test.js)"
+    ]
+  }
+}
