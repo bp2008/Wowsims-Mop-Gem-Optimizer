@@ -403,7 +403,7 @@ function solve(rows,jcEnabled,tol){
 
   const deadline=Date.now()+3000;
   let nodes=0,truncated=false;
-  const NODE_CAP=1500000;
+  const NODE_CAP=300000000;
   const tick=()=>{if(++nodes>NODE_CAP||Date.now()>deadline){truncated=true;return true;}return false;};
 
   function lowerBound(need,jcLeft){
