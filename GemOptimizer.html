@@ -55,6 +55,16 @@
   .num{text-align:right;font-variant-numeric:tabular-nums}
   th.num{text-align:right}
   .small{font-size:12px}
+  .stamp{color:var(--dim);font-size:12px;margin-top:8px}
+  .stamp b{color:var(--text);font-weight:600}
+  @keyframes stampflash{from{background:rgba(248,183,0,.3)}to{background:transparent}}
+  .stamp.flash{animation:stampflash 1.2s ease-out;border-radius:4px}
+  details.panel>summary{cursor:pointer;font-size:15px;font-weight:600;list-style:none;user-select:none}
+  details.panel>summary::-webkit-details-marker{display:none}
+  details.panel>summary::before{content:'▸';display:inline-block;margin-right:8px;color:var(--accent);transition:transform .15s}
+  details.panel[open]>summary::before{transform:rotate(90deg)}
+  details.panel>summary:hover{color:var(--accent)}
+  details.panel[open]>summary{margin-bottom:12px}
 </style>
 </head>
 <body>
@@ -77,10 +87,12 @@ same stat totals — keeping every socket bonus the WowSims plan keeps — with 
     <button id="impLoad" class="primary">Load gear</button>
     <span id="impMsg" class="statline"></span>
   </div>
+  <div id="impStamp" class="stamp"></div>
   <div id="impNotes"></div>
 </div>
 
-<div class="panel">
+<details class="panel" id="gearPanel">
+  <summary>Gear customization <span id="gearCount" class="statline"></span></summary>
   <div class="controls">
     <button id="addSlot">+ Add socket</button>
     <button id="addFive">+ Add 5</button>
@@ -88,7 +100,6 @@ same stat totals — keeping every socket bonus the WowSims plan keeps — with 
     <button id="clearAll" class="danger">Clear all</button>
     <label class="inline"><input type="checkbox" id="jcToggle"> Jewelcrafter (allow Serpent's Eye, max 2)</label>
     <label class="inline">Allowed shortfall per stat <input type="number" id="tol" min="0" step="10" value="0"></label>
-    <button id="optimize" class="primary">Optimize</button>
   </div>
   <table id="slotTable">
     <thead><tr>
@@ -102,6 +113,13 @@ same stat totals — keeping every socket bonus the WowSims plan keeps — with 
   item is unconstrained. Imported gear knows its items and bonuses; hand-entered sockets are each treated as their own item
   with a bonus assumed worth keeping (set color <b>Any</b> to opt out). Prismatic and sha-touched sockets count as Any;
   meta sockets and engineering cogwheels are skipped. Gem stats sourced from the WowSims MoP database.</p>
+</details>
+
+<div class="panel">
+  <div class="controls">
+    <button id="optimize" class="primary">Optimize</button>
+    <span id="optStamp" class="stamp" style="margin-top:0"></span>
+  </div>
 </div>
 
 <div id="results"></div>
@@ -403,7 +421,7 @@ function solve(rows,jcEnabled,tol){
 
   const deadline=Date.now()+3000;
   let nodes=0,truncated=false;
-  const NODE_CAP=300000000;
+  const NODE_CAP=1500000;
   const tick=()=>{if(++nodes>NODE_CAP||Date.now()>deadline){truncated=true;return true;}return false;};
 
   function lowerBound(need,jcLeft){
@@ -677,6 +695,9 @@ if(isBrowser){(function(){
     document.getElementById('impNotes').innerHTML=importNotes.map(n=>`<div class="warn">⚠ ${esc(n)}</div>`).join('');
     document.getElementById('jcToggle').checked=!!state.jc;
     document.getElementById('tol').value=state.tol||0;
+    const nSock=state.groups.reduce((a,g)=>a+g.sockets.length,0);
+    document.getElementById('gearCount').textContent=
+      `— ${nSock} socket${nSock===1?'':'s'} on ${state.groups.length} item${state.groups.length===1?'':'s'} — click to edit sockets & gems`;
     saveState();
   }
   body.addEventListener('change',e=>{
@@ -741,8 +762,9 @@ if(isBrowser){(function(){
       if(!curTxt)importNotes.unshift('No current-gear export given — all sockets are treated as currently empty.');
       const isJc=id=>{const g=GEM_BY_ID.get(id);return g&&g.jc;};
       if(built.groups.some(g=>g.sockets.some(s=>isJc(s.cur)||isJc(s.des))))state.jc=true;
+      state.lastLoad=Date.now();
       msg.textContent=`Loaded ${built.groups.length} socketed item(s).`;
-      render();runOptimize();
+      render();updateStamps(true);runOptimize();
     }catch(e){msg.textContent='⚠ '+e.message;}
   };
   document.getElementById('optimize').onclick=runOptimize;
@@ -752,6 +774,12 @@ if(isBrowser){(function(){
   function gemHTML(g){return g?`${dot(g)}${g.n} <span class="statline">(${statText(g.s)})</span>`:`${dot(null)}<span class="statline">Empty socket</span>`;}
 
   function runOptimize(){
+    optimizeOnce();
+    state.lastOpt=Date.now();
+    saveState();
+    updateStamps(true);
+  }
+  function optimizeOnce(){
     const out=document.getElementById('results');
     const rows=[];
     state.groups.forEach(g=>{
@@ -852,7 +880,36 @@ if(isBrowser){(function(){
     out.innerHTML=h;
   }
 
+  /* ---- action timestamps: "Load gear" / "Optimize" feedback ---- */
+  function fuzzyAgo(t){
+    const s=Math.max(0,Math.floor((Date.now()-t)/1000));
+    if(s<5)return 'just now';
+    if(s<60)return `${s} seconds ago`;
+    const m=Math.floor(s/60);
+    if(m<60)return `${m} minute${m===1?'':'s'} ago`;
+    const h=Math.floor(m/60);
+    if(h<24)return `${h} hour${h===1?'':'s'} ago`;
+    const d=Math.floor(h/24);
+    return `${d} day${d===1?'':'s'} ago`;
+  }
+  function renderStamp(id,label,t,flash){
+    const el=document.getElementById(id);
+    if(!t){el.textContent='';el.dataset.t='';return;}
+    if(el.dataset.t!==String(t)){
+      el.dataset.t=String(t);
+      el.innerHTML=`${label} <b>${new Date(t).toLocaleString()}</b> · <span class="fuzzy"></span>`;
+      if(flash){el.classList.remove('flash');void el.offsetWidth;el.classList.add('flash');}
+    }
+    el.querySelector('.fuzzy').textContent=fuzzyAgo(t);
+  }
+  function updateStamps(flash){
+    renderStamp('impStamp','Gear last loaded',state.lastLoad,flash);
+    renderStamp('optStamp','Last optimized',state.lastOpt,flash);
+  }
+  setInterval(updateStamps,1000);
+
   render();
+  updateStamps();
 })();}
 if(typeof module!=='undefined'&&module.exports){module.exports={solve,computeReqs,parseGearExport,buildImportGroups,resolveGem,GEMS,GEM_BY_ID,GEM_ALL_BY_ID,ITEM_BY_ID,gemFits,MATCH};}
 </script>
